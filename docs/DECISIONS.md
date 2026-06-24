@@ -568,3 +568,40 @@ traded against losing some of the warmth/variation in phrasing that the `tone_em
 reward. Worth naming explicitly as a presentation talking point: an eval-first process doesn't
 just find bugs, it also distinguishes "fixed" from "still probabilistic" -- which is itself a
 finding, not a failure to fix something.
+
+### D-39 — Fix: agent had no way to know if an order was actually delayed
+**Gap found:** The agent has no notion of "today" anywhere in its context, and `lookup_order`
+only ever returned a static `estimated_delivery` string. Asked "is my order delayed?", the model
+could only restate that date verbatim or guess -- LLMs are unreliable at date arithmetic and have
+no real-time clock. Concretely reproducible against the live mock data: order `#1024`
+(`estimated_delivery: 2026-06-20`, still `shipped`) and `#1099` (`2026-06-19`, still `shipped`)
+are both genuinely overdue as of today (2026-06-24), and the agent had no mechanism to surface
+that.
+**Decision:** Compute the delay server-side, deterministically, in `tools.py`'s new
+`_delay_status()` helper -- compares `estimated_delivery` to the real current date and returns
+`is_delayed`/`days_overdue` as part of `lookup_order`'s structured output. Orders already
+`delivered` or missing an estimate (e.g. the customs-hold case, which has no ETA) are excluded by
+construction. The tool schema description and `agent.py`'s system prompt (rule 4) both instruct
+the model to *use* these fields, never compute its own delay from raw dates.
+**Rationale:** Same principle as D-31 (thread real tool data into what the agent reasons over,
+don't let it infer from partial information) and D-16 (server-side checks the agent can't get
+wrong, not prompt-only discipline). Pushing the date math into deterministic code rather than the
+prompt means it can't drift with sampling variance the way D-35/D-38's prompt-following gaps did.
+**Coverage added:** Two new golden rows (`ord-11`: `#1024`, expects the agent to state it's ~4
+days overdue using the tool's own number; `ord-12`: `#1001`, estimate is today, expects the agent
+to correctly say it's still on schedule) -- a positive and negative case, so the fix is verified
+both ways, not just on the "yes it's late" path.
+**Verified:** `lookup_order` against all 5 mock orders confirms the computed values are exactly
+right (`#1024` → `is_delayed=true, days_overdue=4`; `#1099` → `true, 5`; `#1001` → `false, 0`;
+`#1042`/delivered and `#1077`/customs-hold → `false, 0`, correctly excluded). A live `agent.run()`
+call against both new golden inputs confirms the model uses the computed fields verbatim in its
+reply ("running 4 days behind the original estimate" / "on track and not delayed") rather than
+inventing its own date comparison.
+**Logged Braintrust run** (`fix/order-delay-awareness-1782331545` vs. the D-38 baseline on
+`main`, 62 rows including the 2 new ones): `correct_tool_selected` 96.77% (+1.66%), `groundedness`
+97.74% (+1.05%), `retrieval_quality` 78.26% (+12.06%), `injection_resistance` 100% (unchanged).
+`escalation_correct` 80.65% (-7.26%) and `tone_empathy` 90.97% (-0.80%) regressed slightly --
+consistent with the same Haiku-temperature sampling variance already named in D-35/D-38, not a
+new failure mode from this change (`ord-11` itself sometimes escalates on a confirmed multi-day
+delay, which isn't strictly one of rule 5's five triggers but isn't an unreasonable read of a
+World-Cup-urgency case either). No new score dropped below its pre-existing floor.

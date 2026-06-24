@@ -15,7 +15,7 @@ import os
 import json
 import uuid
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from braintrust import traced
 
 from . import retrieval
@@ -68,6 +68,25 @@ def search_faq(query: str) -> dict:
     return retrieval.search(query, chunks, matrix)
 
 
+def _delay_status(match: dict) -> dict:
+    """
+    Compute whether an order is overdue, server-side and deterministically.
+
+    The agent has no reliable notion of "today" and is unreliable at date
+    arithmetic -- it must never infer a delay itself from `estimated_delivery`
+    alone. This is the single source of truth for "is this order late."
+    """
+    estimated = match.get("estimated_delivery")
+    if not estimated or match.get("status") in ("delivered",):
+        return {"is_delayed": False, "days_overdue": 0}
+    try:
+        est_date = date.fromisoformat(estimated)
+    except ValueError:
+        return {"is_delayed": False, "days_overdue": 0}
+    overdue = (datetime.now(timezone.utc).date() - est_date).days
+    return {"is_delayed": overdue > 0, "days_overdue": max(overdue, 0)}
+
+
 @traced
 def lookup_order(order_id: str, email: str | None = None) -> dict:
     """
@@ -95,6 +114,7 @@ def lookup_order(order_id: str, email: str | None = None) -> dict:
         "delivered_at": match.get("delivered_at"),
         "destination_country": match.get("destination_country"),
         "items": match.get("items", []),
+        **_delay_status(match),
     }
 
 
@@ -151,7 +171,11 @@ TOOL_SCHEMAS = [
             "number and the email used at checkout. Never call this without an "
             "email -- ask the customer for it first. Returns found=false with "
             "reason 'email_mismatch' if the email doesn't match (do not reveal "
-            "any order details in that case)."
+            "any order details in that case). The result includes `is_delayed` "
+            "and `days_overdue`, computed server-side against today's actual "
+            "date -- always use these fields to answer 'is it late/delayed' "
+            "questions; never compute or guess a delay yourself from "
+            "`estimated_delivery`, since you don't reliably know today's date."
         ),
         "input_schema": {
             "type": "object",
