@@ -482,3 +482,26 @@ single edge case risks prompt bloat without closing the gap, since the underlyin
 sampling variance, not missing instructions. Both residuals are logged here rather than hidden,
 and are good "what I'd do next" presentation material (D-2 framing: known, deliberately scoped
 limitation, not an unnoticed bug).
+
+### D-36 — Fix: closed the D-34 follow-up — `faq-11`/`faq-13` KB chunking gap
+**Bug found:** `faq-11` ("Do you ship to Brazil?", score 0.438) and `faq-13` ("What hours is
+your support team available?", score 0.457) sat below the 0.50 threshold even though `kb/faq.md`
+literally contains both answers. Root cause confirmed by direct embedding test (no LLM calls,
+pure cosine similarity, so this is exact, not a judgment call): each chunk's embedded text is
+`"Q: <heading>\nA: <answer>"`, and the *heading* dominates what the chunk is semantically "about."
+`faq-13`'s heading was "How can I reach a human?" — about contact channels, with "support hours"
+buried as a trailing clause in the answer. `faq-11`'s heading was "Do you ship internationally?"
+and its answer said "to most countries" without ever naming a country, so a query naming a
+specific country ("Brazil") had a vocabulary gap with the chunk's generic phrasing.
+**Decision:** Reworded the `faq-13` heading to "How can I reach a human? What are your support
+hours?" and added named country examples (Brazil, the UK, Canada, Germany) to the `faq-11`
+answer. No new chunks, no heading awkwardness — both reads naturally as an FAQ entry.
+**Verified:** Direct embedding test before/after: `faq-13` 0.444 -> 0.526; `faq-11` 0.441 -> 0.615
+(0.537 / 0.603 respectively once re-embedded in the full 23-chunk index). Re-ran all 23
+`search_faq` golden rows against the live index afterward: only these two flipped to `in_kb=True`,
+every other row's score is unchanged, and `kb-out-03` (the deliberate out-of-KB gift-wrap test
+row) correctly remains `in_kb=False`.
+**Rationale:** This is the right layer to fix this at (D-07's "small, correct KB beats a large
+noisy one" already established that KB content/phrasing, not the threshold, is where retrieval
+misses should be resolved first). It also closes the open item D-34 explicitly deferred, so v2's
+`retrieval_quality` score reflects a real fix rather than just an honestly-reported known gap.
