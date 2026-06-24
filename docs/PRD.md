@@ -261,12 +261,24 @@ Every shadow-mode and live transcript becomes a candidate golden row (closing th
    attack class as D-21's injection rows) and a full golden-set `Eval()` run against baseline
    before it ships, so prompt/KB drift stays measurable instead of silent. Deliberately excludes
    persistent per-customer conversation memory for personalization — that's a different feature
-   with its own PII exposure (§6 rule 6, no data beyond the order owner), not part of this loop.
-3. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
+   (see item 3) with its own PII exposure, not part of this loop.
+3. **Per-customer conversation memory (personalization) — a separate, also-valuable feature.**
+   Once a customer's identity is verified (the same email check `lookup_order` already requires,
+   D-16), retain a short, scoped history of *that customer's own* prior contacts — what they
+   already asked, what's still unresolved — so a returning customer doesn't have to re-explain
+   themselves on a follow-up contact (directly serves the §2 JTBD: "without repeating themselves
+   or being routed in circles"). Distinct from item 2: this is read-back of one verified
+   customer's own data, not a cross-customer pattern that changes system behavior for everyone.
+   Constraints: strictly scoped to the verified customer (closes the same PII risk D-16 already
+   guards `lookup_order` against — never another customer's history); a defined retention window,
+   not indefinite storage (§6 rule 6); and its own eval rows before it ships — does injecting
+   prior-conversation context ever cause the agent to assert something not grounded in *this*
+   conversation's own tool calls (a new groundedness failure mode this feature could introduce)?
+4. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
    visibility, not just automation. Cheap to build once Braintrust logging is already in place;
    high trust payoff for a 2-person CS team deciding how much to lean on the agent.
-4. **First write action** (see §9e) — gated behind §9c's pilot gates, not on a fixed calendar date.
-5. **Multi-channel (email first, not SMS/voice).** Klaviyo-adjacent and most of Futebol Nation's
+5. **First write action** (see §9e) — gated behind §9c's pilot gates, not on a fixed calendar date.
+6. **Multi-channel (email first, not SMS/voice).** Klaviyo-adjacent and most of Futebol Nation's
    Tier-1 volume is plausibly email-shaped pre-chat-widget adoption; lower lift than voice.
 
 ### 9e. Read-only → write actions: which one first, and how
