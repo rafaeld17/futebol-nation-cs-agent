@@ -132,7 +132,13 @@ TOOL_SCHEMAS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The customer's question or topic to look up.",
+                    "description": (
+                        "The customer's question, close to their own words as a full "
+                        "question -- NOT a compressed list of keywords. This KB's retrieval "
+                        "matches natural questions better than keyword fragments (e.g. pass "
+                        "\"What hours is your support team available?\", not \"support hours "
+                        "customer service availability\")."
+                    ),
                 }
             },
             "required": ["query"],
