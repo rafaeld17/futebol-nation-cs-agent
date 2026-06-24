@@ -2,7 +2,7 @@
 
 **Author:** Rafael Daraya
 **Status:** Draft for take-home exercise (Lead PM, Klaviyo)
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-24
 
 ---
 
@@ -72,18 +72,24 @@ by the agent with no human involvement and no negative customer signal.
 - Target (illustrative): **≥ 60% of Tier-1 contacts** contained.
 
 ### Guardrail metrics (we will not trade these for containment)
-| Metric | Definition | Target | Measured by (see IMPLEMENTATION_PLAN §3b) |
-|---|---|---|---|
-| **Groundedness / hallucination rate** | % of agent claims not supported by FAQ or order data | **< 2%** | `groundedness` (LLM-judge); hallucination rate = `1 − avg(groundedness)` |
-| **Escalation precision** | When the agent escalates, was escalation actually warranted | high | `escalation_correct`, sliced to rows where the agent escalated (`escalated=true`) |
-| **Escalation recall (safety)** | Of cases that *should* escalate, % that did (no false "resolutions") | **near 100%** for risk-sensitive intents | `escalation_correct`, sliced to rows where escalation was expected (`expected_escalation=true`) |
-| **Tone/empathy pass rate** | LLM-judged: on-brand, polite, acknowledges frustration | ≥ 95% | `tone_empathy` (LLM-judge, 0–1); "pass rate" = % of rows scoring ≥ 0.8, not the raw average |
+| Metric | Definition | Target | Current (v2)¹ | Gap |
+|---|---|---|---|---|
+| **Groundedness / hallucination rate** | % of agent claims not supported by FAQ or order data | **< 2%** | 89.67% grounded → **~10.3% hallucination rate** | ❌ Largest gap — **#1 pre-pilot priority**, see §9a |
+| **Escalation precision** | When the agent escalates, was escalation actually warranted | high | 85.00% (`escalation_correct`, all rows, not yet sliced) | ⚠️ Needs the precision-only slice, see §9a |
+| **Escalation recall (safety)** | Of cases that *should* escalate, % that did (no false "resolutions") | **near 100%** for risk-sensitive intents | ~88% on `should_escalate_risk` category | ⚠️ Near-blocking gate (D-06) not yet met, see §9a |
+| **Tone/empathy pass rate** | LLM-judged: on-brand, polite, acknowledges frustration | ≥ 95% | 92.30% (raw average, not yet sliced to ≥0.8) | ⚠️ Close; needs the precise pass-rate cut, see §9a |
 
 > Precision and recall are not two separate scorers — `escalation_correct` is a single per-row
 > match (did `escalated` equal `expected_escalation`?). The two numbers in this table are the
 > same scores sliced two different ways in Braintrust's per-row drill-down, not independent
 > measurements. ARR/containment above is likewise not a dedicated scorer: it's the % of rows
 > where `expected_escalation=false` and the agent resolved correctly (see IMPLEMENTATION_PLAN §3c).
+>
+> ¹ Measured on the 60-row golden set via the logged Braintrust run after fixes D-27–D-37
+> (experiment `fix/search-faq-query-phrasing-1782328567`). Full per-scorer numbers and root-cause
+> detail for every gap in this table are in `DECISIONS.md` D-35–D-38. This is eval-harness
+> signal, not live customer traffic — calibration against real usage is still §9c (pilot),
+> gated on closing this table first per the new §9a below.
 
 ### Efficiency / business metrics (downstream)
 - Cost per contact ↓, Average Handle Time ↓, First Response Time → near-instant for contained
@@ -175,24 +181,65 @@ hand-curated golden set. It does not yet prove the agent is *calibrated* to Fute
 customers. The roadmap below is sequenced to close that gap before increasing the agent's
 authority (more intents, write access), not in parallel with it.
 
-### 9a. Expand the golden dataset now, or wait for real data?
+### 9a. Close the v2 score gap before piloting — immediate next focus
 
-**Don't blindly grow it pre-launch.** The 60 rows encode the author's hypotheses about what
-customers ask — useful for proving the harness works, but not a substitute for observed traffic.
-Doubling row count now without new signal mostly tests our own assumptions more thoroughly
-(see the PRD §7 risk: "eval overfitting to golden set").
+The §3 guardrail table shows v2 (post D-27–D-37) is a real, measured improvement over the
+audited baseline, but two near-blocking gates (D-06) aren't met yet: groundedness/hallucination
+rate is ~10.3% against a <2% target, and escalation recall on risk-sensitive intents is ~88%
+against a "near 100%" target. **No pilot (§9c) starts before this section's exit criteria are
+met** — running a shadow-mode pilot against an agent that still hallucinates 1 in 10 claims would
+just generate noisy, unusable pilot data instead of a real signal.
 
-What's worth doing pre-launch, surgically:
+1. **Close the groundedness gap (highest priority).** Root-caused in `DECISIONS.md` D-38: the
+   gap isn't missing instructions, it's small embellishments the agent adds inconsistently
+   across runs (an invented refund timeline, "track your return from order history," wash-care
+   instructions, an unsupported "authenticity guarantee" reference) — classic non-zero-
+   temperature LLM variance, not a wording problem prompt-tuning alone can fully close. Two
+   concrete actions, in order:
+   - **Run the agent loop at a lower temperature** (e.g. `temperature=0.2`, or `0` for a
+     deterministic baseline) on `src/agent.py`'s `_MODEL` calls and re-run the full eval to
+     measure the actual groundedness/tone_empathy tradeoff (lower temperature should reduce
+     embellishment but may flatten the warmth `tone_empathy` rewards — needs to be measured,
+     not assumed).
+   - **Add worked examples for the specific embellishment patterns found** (same technique as
+     D-30's already-shipped example) — e.g. an explicit "do not add a timeframe or process
+     detail that isn't in the tool result" rule with a concrete before/after.
+2. **Close the escalation-recall gap on risk-sensitive intents.** Also root-caused in D-35/D-38
+   as sampling variance on Haiku's instruction-following for the "escalate immediately" rule
+   (D-28). Two paths, not mutually exclusive:
+   - **Evaluate a stronger model in the agent loop.** Today `_MODEL` is `claude-haiku-4-5`
+     (chosen for cost/latency, D-15). Test the strongest commercially-justifiable model
+     available against the same golden set and measure whether instruction-following
+     reliability on this specific rule improves enough to justify the cost/latency delta —
+     this is a measurement, not a foregone conclusion, and the eval harness already makes the
+     comparison cheap (same pattern as D-15's haiku/sonnet split).
+   - **Add a deterministic backstop** for the highest-stakes trigger phrases (chargeback threat,
+     explicit human request, "I'm done repeating myself") that forces an `escalate_to_human`
+     call regardless of model compliance, rather than relying on prompt-following alone for the
+     cases where a miss is most costly.
+3. **Exit criteria to advance to §9b (dataset) and §9c (pilot):** groundedness ≥ 98%
+   (hallucination < 2%), escalation recall on risk-sensitive rows ≥ 95%, tone pass rate ≥ 95%
+   (the precise ≥0.8-per-row cut, not the raw average), sustained across at least two
+   consecutive full-eval runs (to rule out a single lucky/unlucky sample given the
+   non-determinism this section exists to close).
+4. **Track every change the same way D-27–D-38 did:** isolated row-level test on the specific
+   flagged rows first, then a full Braintrust run, compared against the prior experiment, logged
+   to `DECISIONS.md` with the before/after numbers — not just "we made a change," a measured one.
+
+### 9b. Expand the golden dataset
+
+
 1. **Close known, named gaps** — promo-code and payment/billing FAQ rows (D-33), which were
    deliberately deferred, not validated as low-priority.
 2. **Add a hold-out slice** (~15 rows, never used to tune the prompt) per the §7 mitigation, so
    we can tell calibration from genuine improvement.
-3. **Stop there.** The next real expansion should be pilot-driven (§9b), not speculative.
+3. **Stop there.** The next real expansion should be pilot-driven (§9c), not speculative.
 
-### 9b. Run a beta pilot before full reliance — recommended, with a specific shape
+### 9c. Run a beta pilot before full reliance — recommended, with a specific shape
 
 Yes, and the World Cup timing makes this more urgent, not less: a 3–5x volume spike is the worst
-time to discover the agent is miscalibrated. Proposed shape:
+time to discover the agent is miscalibrated. Proposed shape — entered only after §9a's exit
+criteria are met:
 
 | Phase | What | Gate to advance |
 |---|---|---|
@@ -200,21 +247,29 @@ time to discover the agent is miscalibrated. Proposed shape:
 | **2. Limited live** | Agent responds directly on a capped slice of contacts (e.g. FAQ-only intents, or off-peak hours), full escalation path live. | No safety-gate regression (groundedness, escalation recall) over N=200+ live contacts; CSAT on contained tickets ≥ baseline |
 | **3. Full v0 scope** | All in-scope intents (§4), no traffic cap. | Sustained gate performance through a real volume spike, not just average load |
 
-Every shadow-mode and live transcript becomes a candidate golden row (closing the loop IMPLEMENTATION_PLAN §4 already names as the post-v0 plan) — this is how §9a's "wait for real data" actually gets satisfied, not a separate initiative.
+Every shadow-mode and live transcript becomes a candidate golden row (closing the loop IMPLEMENTATION_PLAN §4 already names as the post-v0 plan) — this is how §9b's "wait for real data" actually gets satisfied, not a separate initiative.
 
-### 9c. What to prioritize next (post-pilot, ranked)
+### 9d. What to prioritize next (post-pilot, ranked)
 
-1. **Online evals + human review queue.** Without this, the pilot in §9b can't produce the
+1. **Online evals + human review queue.** Without this, the pilot in §9c can't produce the
    "real ticket → new golden row" loop that justifies expanding the dataset. This is the
    prerequisite for everything else here, not a parallel nice-to-have.
-2. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
+2. **Constrained self-improvement loop, not per-customer memory or autonomous self-editing.**
+   Once the review queue (item 1) is live, flagged patterns — recurring out-of-KB questions,
+   repeated low-confidence escalations — become structured, attributed candidate entries queued   for human review, never direct writes the agent makes to its own prompt, KB, or this roadmap.
+   Promotion requires an occurrence threshold (resists single-transcript poisoning, the same
+   attack class as D-21's injection rows) and a full golden-set `Eval()` run against baseline
+   before it ships, so prompt/KB drift stays measurable instead of silent. Deliberately excludes
+   persistent per-customer conversation memory for personalization — that's a different feature
+   with its own PII exposure (§6 rule 6, no data beyond the order owner), not part of this loop.
+3. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
    visibility, not just automation. Cheap to build once Braintrust logging is already in place;
    high trust payoff for a 2-person CS team deciding how much to lean on the agent.
-3. **First write action** (see §9d) — gated behind §9b's pilot gates, not on a fixed calendar date.
-4. **Multi-channel (email first, not SMS/voice).** Klaviyo-adjacent and most of Futebol Nation's
+4. **First write action** (see §9e) — gated behind §9c's pilot gates, not on a fixed calendar date.
+5. **Multi-channel (email first, not SMS/voice).** Klaviyo-adjacent and most of Futebol Nation's
    Tier-1 volume is plausibly email-shaped pre-chat-widget adoption; lower lift than voice.
 
-### 9d. Read-only → write actions: which one first, and how
+### 9e. Read-only → write actions: which one first, and how
 
 Sequence by **blast radius if wrong**, not by customer-perceived value:
 
