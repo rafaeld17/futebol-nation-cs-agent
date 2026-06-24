@@ -505,3 +505,26 @@ row) correctly remains `in_kb=False`.
 noisy one" already established that KB content/phrasing, not the threshold, is where retrieval
 misses should be resolved first). It also closes the open item D-34 explicitly deferred, so v2's
 `retrieval_quality` score reflects a real fix rather than just an honestly-reported known gap.
+
+### D-37 — Fix: `search_faq`'s tool description told the agent to pass keywords, not questions
+**Bug found:** Running the first post-D-27–D-36 Braintrust experiment surfaced 4 unexpected
+`retrieval_quality` misses beyond what D-36 predicted: `faq-12` (top score 0.486), `faq-13`
+(0.366 — *despite* the D-36 fix), `ret-01` (didn't call `search_faq` at all), plus the expected
+correct fail on `kb-out-03`. Pulling the actual tool-call spans showed the agent was compressing
+customer questions into terse keyword strings before calling `search_faq` -- e.g. "support hours
+customer service availability" instead of the customer's actual "What hours is your support
+team available?" Direct embedding test confirmed MiniLM scores the natural full-sentence query
+noticeably higher against the *same* chunk (0.537 vs 0.366 for `faq-13`) -- this embedding model
+matches natural questions better than keyword fragments, the opposite of classic
+TF-IDF/BM25 intuition, and nothing in the tool schema told the model which style to use.
+**Decision:** `search_faq`'s `query` parameter description in `src/tools.py` now explicitly
+says to pass the customer's question close to their own words, with a concrete before/after
+example, instead of a keyword list.
+**Verified:** Re-ran the 4 affected rows after the fix: `faq-12` 0.486 -> 0.530, `faq-13` 0.366 ->
+0.537, `ret-01` now calls `search_faq` at all (previously skipped it entirely), `kb-out-03`
+correctly still scores below threshold (0.351) since it's the deliberate out-of-KB test row.
+**Rationale:** This is a different layer than D-34 (threshold) and D-36 (chunk phrasing) -- it's
+the agent's own query-formulation behavior, discovered only because the *first* full eval run
+after D-36 was actually executed rather than assumed clean from isolated row tests. Good
+evidence for the presentation that the iteration loop has to include a real end-to-end run, not
+just unit-style checks on the piece you think you changed.
