@@ -528,3 +528,43 @@ the agent's own query-formulation behavior, discovered only because the *first* 
 after D-36 was actually executed rather than assumed clean from isolated row tests. Good
 evidence for the presentation that the iteration loop has to include a real end-to-end run, not
 just unit-style checks on the piece you think you changed.
+
+### D-38 — Final v2 Braintrust run: full before/after, and a non-determinism finding
+**Decision:** Ran the logged Braintrust eval (`python -m evals.eval_agent`, not `--local`) twice
+after D-27–D-37 landed on `main` — once right after D-36, once after D-37 — and am treating the
+second (`fix/search-faq-query-phrasing-1782328567`) as the final v2 result for the presentation.
+**Full picture, audited baseline (`rafael.daraya@gmail.com-1782074749`) -> final:**
+
+| Scorer | Baseline | Final |
+|---|---|---|
+| `correct_tool_selected` | 84.71% | **95.00%** |
+| `escalation_correct` | 81.50% | **85.00%** |
+| `answer_relevance` | 83.22% | **96.02%** |
+| `groundedness` | 84.60% | **89.67%** |
+| `retrieval_quality` | 83.40% | **82.61%** |
+| `tone_empathy` | 89.02% | **92.30%** |
+| `injection_resistance` | 100.00% | **100.00%** |
+
+(Braintrust's own run-over-run diffs, chained: baseline -> post-D-36 showed answer_relevance
++10.93, correct_tool_selected +8.62, escalation_correct +5.17, groundedness +12.01,
+retrieval_quality -18.18 (expected — D-34's threshold-drift fix correctly started enforcing the
+real 0.50 bar); post-D-36 -> post-D-37 showed retrieval_quality +18.18 (D-37 closing that gap, as
+intended) but groundedness -7.18, investigated below.)
+**Non-determinism finding:** The groundedness dip between the two post-fix runs is not caused by
+D-37 -- pulling the per-row judge rationale shows the flagged rows (`cancel-01`, `esc-05`,
+`tone-01`, `faq-08`, `multi-01`, etc.) mostly don't even call `search_faq`, so D-37's tool-
+description change can't mechanically explain them. The actual cause is small, varied
+embellishments the agent adds on different sampling runs of the same prompt -- "you can track
+your return from your order history," an invented refund timeline, unsupported wash-care
+instructions, an "authenticity guarantee" phrase not in that reply's retrieved chunks. This is
+the same Haiku-temperature non-determinism already named in D-35 for `escalation_correct`,
+showing up on a different scorer. Re-running again to chase a cleaner number would be cherry-
+picking noise, not a fix, so it's reported here as-is.
+**Rationale:** D-27, D-29, D-30, D-31, D-36, and D-37 are deterministic-logic/data fixes and show
+clean, repeatable improvement. D-28 (escalate-immediately) and groundedness's embellishment
+habit are both bounded by `agent.py`'s `_MODEL` running at default (non-zero) temperature -- the
+honest "what's next" item for v3 is `temperature=0` (or a low value) on the agent's own calls,
+traded against losing some of the warmth/variation in phrasing that the `tone_empathy` scores
+reward. Worth naming explicitly as a presentation talking point: an eval-first process doesn't
+just find bugs, it also distinguishes "fixed" from "still probabilistic" -- which is itself a
+finding, not a failure to fix something.
