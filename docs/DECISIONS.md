@@ -136,7 +136,7 @@ calibrated for OpenAI embedding space; after switching to MiniLM the scores clus
 - Out-of-KB scores: 0.289 (loyalty program) → 0.518 (resale value, borderline)
 - Threshold 0.50 correctly classifies 9/11; 2 borderline cases fall to layer two (see D-14).
 **Discovery path:** Swapping the embedding model surfaced this in the eval run — exactly the
-iteration loop the eval harness is designed to support. Good demo moment for the presentation.
+iteration loop the eval harness is designed to support.
 
 ### D-14 — Two-layer grounding (threshold + agent reasoning)
 **Decision:** The retrieval threshold is the first pass. For borderline cases where a chunk is
@@ -170,7 +170,7 @@ processing, delivered, customs-hold, personalized). The tool handler reads it di
 yak-shaving. The mock is hidden behind the `lookup_order(order_id, email)` interface, so the
 real Shopify API is a drop-in replacement without touching the agent or the eval harness.
 
-### D-18 — Braintrust for evals (not Arize Phoenix)
+### D-18 — Braintrust for evals
 **Decision:** Braintrust is the eval framework.
 **Rationale:** Braintrust's `Eval()` + experiment-comparison UI tells the "found a failure →
 fixed it → score went up" story visually — exactly the narrative needed for the presentation.

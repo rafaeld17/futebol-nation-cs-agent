@@ -37,11 +37,11 @@ rubric signal: thoughtful AI workflow design + a credible **eval & iteration** s
 - **`escalate_to_human(reason, summary, sentiment)`:** returns a structured handoff object
   (prints/stores a "ticket"). This is a *first-class success path*, not a failure.
 
-### Stack (keep it boring)
+### Stack
 - **Language:** Python.
 - **Model:** Claude (e.g. `claude-haiku-4-5` in the loop for speed/cost; a stronger model as the
-  eval judge). Swappable — Braintrust is provider-agnostic.
-- **RAG:** embeddings + Chroma or FAISS (or a 30-line in-memory cosine search; the KB is tiny).
+  eval judge).
+- **RAG:** RAG via in-memory cosine search (Use `sentence-transformers/all-MiniLM-L6-v2` (local)).
 - **Evals:** **Braintrust** (`Eval()` + scorers + dataset).
 - **Demo UI:** Streamlit chat.
 

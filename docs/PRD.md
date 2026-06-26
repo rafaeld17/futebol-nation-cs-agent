@@ -72,19 +72,13 @@ by the agent with no human involvement and no negative customer signal.
 - Target (illustrative): **≥ 60% of Tier-1 contacts** contained.
 
 ### Guardrail metrics (we will not trade these for containment)
-| Metric | Definition | Target | Current (v2)¹ | Gap |
-|---|---|---|---|---|
-| **Groundedness / hallucination rate** | % of agent claims not supported by FAQ or order data | **< 2%** | 89.67% grounded → **~10.3% hallucination rate** | ❌ Largest gap — **#1 pre-pilot priority**, see §9a |
-| **Escalation precision** | When the agent escalates, was escalation actually warranted | high | 85.00% (`escalation_correct`, all rows, not yet sliced) | ⚠️ Needs the precision-only slice, see §9a |
-| **Escalation recall (safety)** | Of cases that *should* escalate, % that did (no false "resolutions") | **near 100%** for risk-sensitive intents | ~88% on `should_escalate_risk` category | ⚠️ Near-blocking gate (D-06) not yet met, see §9a |
-| **Tone/empathy pass rate** | LLM-judged: on-brand, polite, acknowledges frustration | ≥ 95% | 92.30% (raw average, not yet sliced to ≥0.8) | ⚠️ Close; needs the precise pass-rate cut, see §9a |
+| Metric                                | Definition                                                  | Target   | Current (v2)¹                                   | Gap                                                |
+| ------------------------------------- | ----------------------------------------------------------- | -------- | ----------------------------------------------- | -------------------------------------------------- |
+| **Groundedness / hallucination rate** | % of agent claims not supported by FAQ or order data        | **< 2%** | 89.67% grounded → **~10.3% hallucination rate** | ❌ Largest gap — **#1 pre-pilot priority**, see §9a |
+| **Escalation precision**              | When the agent escalates, was escalation actually warranted | ≥ 95%    | 85.00% (`escalation_correct`, all rows)         | ⚠️ Near-blocking gate (D-06) not yet met, see §9a  |
+| **Tone/empathy pass rate**            | LLM-judged: on-brand, polite, acknowledges frustration      | ≥ 95%    | 92.30% (raw average)                            | ⚠️ Close; needs the precise pass-rate cut, see §9a |
 
-> Precision and recall are not two separate scorers — `escalation_correct` is a single per-row
-> match (did `escalated` equal `expected_escalation`?). The two numbers in this table are the
-> same scores sliced two different ways in Braintrust's per-row drill-down, not independent
-> measurements. ARR/containment above is likewise not a dedicated scorer: it's the % of rows
-> where `expected_escalation=false` and the agent resolved correctly (see IMPLEMENTATION_PLAN §3c).
->
+>>
 > ¹ Measured on the 60-row golden set via the logged Braintrust run after fixes D-27–D-37
 > (experiment `fix/search-faq-query-phrasing-1782328567`). Full per-scorer numbers and root-cause
 > detail for every gap in this table are in `DECISIONS.md` D-35–D-38. This is eval-harness
@@ -198,9 +192,7 @@ just generate noisy, unusable pilot data instead of a real signal.
    concrete actions, in order:
    - **Run the agent loop at a lower temperature** (e.g. `temperature=0.2`, or `0` for a
      deterministic baseline) on `src/agent.py`'s `_MODEL` calls and re-run the full eval to
-     measure the actual groundedness/tone_empathy tradeoff (lower temperature should reduce
-     embellishment but may flatten the warmth `tone_empathy` rewards — needs to be measured,
-     not assumed).
+     measure the actual groundedness/tone_empathy tradeoff (lower temperature should reduce embellishment but may flatten the warmth `tone_empathy` rewards — needs to be measured, not assumed).
    - **Add worked examples for the specific embellishment patterns found** (same technique as
      D-30's already-shipped example) — e.g. an explicit "do not add a timeframe or process
      detail that isn't in the tool result" rule with a concrete before/after.
@@ -224,7 +216,7 @@ just generate noisy, unusable pilot data instead of a real signal.
    non-determinism this section exists to close).
 4. **Track every change the same way D-27–D-38 did:** isolated row-level test on the specific
    flagged rows first, then a full Braintrust run, compared against the prior experiment, logged
-   to `DECISIONS.md` with the before/after numbers — not just "we made a change," a measured one.
+   to `DECISIONS.md` with the before/after numbers
 
 ### 9b. Expand the golden dataset
 
@@ -251,10 +243,8 @@ Every shadow-mode and live transcript becomes a candidate golden row (closing th
 
 ### 9d. What to prioritize next (post-pilot, ranked)
 
-1. **Online evals + human review queue.** Without this, the pilot in §9c can't produce the
-   "real ticket → new golden row" loop that justifies expanding the dataset. This is the
-   prerequisite for everything else here, not a parallel nice-to-have.
-2. **Constrained self-improvement loop, not per-customer memory or autonomous self-editing.**
+
+1. **Constrained self-improvement loop, not per-customer memory or autonomous self-editing.**
    Once the review queue (item 1) is live, flagged patterns — recurring out-of-KB questions,
    repeated low-confidence escalations — become structured, attributed candidate entries queued   for human review, never direct writes the agent makes to its own prompt, KB, or this roadmap.
    Promotion requires an occurrence threshold (resists single-transcript poisoning, the same
@@ -262,7 +252,7 @@ Every shadow-mode and live transcript becomes a candidate golden row (closing th
    before it ships, so prompt/KB drift stays measurable instead of silent. Deliberately excludes
    persistent per-customer conversation memory for personalization — that's a different feature
    (see item 3) with its own PII exposure, not part of this loop.
-3. **Per-customer conversation memory (personalization) — a separate, also-valuable feature.**
+2. **Per-customer conversation memory (personalization) — a separate, also-valuable feature.**
    Once a customer's identity is verified (the same email check `lookup_order` already requires,
    D-16), retain a short, scoped history of *that customer's own* prior contacts — what they
    already asked, what's still unresolved — so a returning customer doesn't have to re-explain
@@ -274,16 +264,16 @@ Every shadow-mode and live transcript becomes a candidate golden row (closing th
    not indefinite storage (§6 rule 6); and its own eval rows before it ships — does injecting
    prior-conversation context ever cause the agent to assert something not grounded in *this*
    conversation's own tool calls (a new groundedness failure mode this feature could introduce)?
-4. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
+3. **Containment/cost dashboard for the merchant.** The secondary user's stated need (§2) is
    visibility, not just automation. Cheap to build once Braintrust logging is already in place;
    high trust payoff for a 2-person CS team deciding how much to lean on the agent.
-5. **First write action** (see §9e) — gated behind §9c's pilot gates, not on a fixed calendar date.
-6. **Multi-channel (email first, not SMS/voice).** Klaviyo-adjacent and most of Futebol Nation's
+4. **Add write action** (see §9e) — gated behind §9c's pilot gates, not on a fixed calendar date.
+5. **Multi-channel** Klaviyo-adjacent and most of Futebol Nation's
    Tier-1 volume is plausibly email-shaped pre-chat-widget adoption; lower lift than voice.
 
 ### 9e. Read-only → write actions: which one first, and how
 
-Sequence by **blast radius if wrong**, not by customer-perceived value:
+Sequence by **blast radius if wrong**:
 
 | Action | Reversibility | Money movement | Recommendation |
 |---|---|---|---|
